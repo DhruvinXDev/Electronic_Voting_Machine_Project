@@ -22,8 +22,8 @@
 // Button pins
 #define PARTY1_BTN 4           // Button for Party 1
 #define PARTY2_BTN 5           // Button for Party 2
-#define PARTY3_BTN 18          // Button for Party 3
-#define PARTY4_BTN 19          // Button for Party 4
+#define PARTY3_BTN 13          // Button for Party 3
+#define PARTY4_BTN 2          // Button for Party 4
 
 // Access Point Settings
 const char* ap_ssid = "VotingMachine_AP";
