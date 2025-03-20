@@ -1,317 +1,442 @@
+// ESP32 Four Push Button Example with Buzzer and RFID
+// Modified to avoid pin conflicts with RFID
+
 #include <SPI.h>
 #include <MFRC522.h>
-#include <WiFi.h>
-#include <WebServer.h>
 
-// Pin definitions
-#define SS_PIN 21       // ESP32 pin for SPI SS to RC522
-#define RST_PIN 22      // ESP32 pin for SPI RST to RC522
+// Define the GPIO pins for buttons, LEDs and buzzer
+// Changed to avoid conflicts with RFID pins (18, 19, 21, 22, 23)
+const int button1Pin = 4;    // GPIO pin for first button
+const int button2Pin = 17;   // GPIO pin for second button
+const int button3Pin = 13;   // GPIO pin for third button
+const int button4Pin = 14;   // GPIO pin for fourth button
 
-// LED pins
-#define AUTH_SUCCESS_LED 12    // Green LED for RFID authentication success
-#define AUTH_FAIL_LED 14       // Red LED for RFID authentication failure
-#define PARTY1_LED 27          // Green LED for Party 1 vote
-#define PARTY2_LED 26          // Green LED for Party 2 vote
-#define PARTY3_LED 25          // Green LED for Party 3 vote
-#define PARTY4_LED 33          // Green LED for Party 4 vote
+const int led1Pin = 2;       // GPIO pin for first LED (built-in on most ESP32 boards)
+const int led2Pin = 15;      // GPIO pin for second LED
+const int led3Pin = 5;       // Changed from 18 to 5 (to avoid conflict with SCK_PIN)
+const int led4Pin = 16;      // Changed from 5 to 16
+const int led5Pin = 27;      // Changed from 21 to 27 (to avoid conflict with SS_PIN)
 
-// Buzzer pins
-#define AUTH_BUZZER 32         // Buzzer for authentication feedback
-#define VOTE_BUZZER 15         // Buzzer for vote confirmation
+const int buzzerPin = 25;    // Changed from 16 to 25 (to avoid conflict with led4Pin)
 
-// Button pins
-#define PARTY1_BTN 4           // Button for Party 1
-#define PARTY2_BTN 5           // Button for Party 2
-#define PARTY3_BTN 13          // Button for Party 3
-#define PARTY4_BTN 2          // Button for Party 4
+// RFID pins - KEEP THESE EXACTLY AS SPECIFIED
+#define SS_PIN    21   // ESP32 pin GPIO21 for SDA (SS)
+#define RST_PIN   22   // ESP32 pin GPIO22 for RST
+#define SCK_PIN   18   // ESP32 pin GPIO18 for SCK
+#define MOSI_PIN  23   // ESP32 pin GPIO23 for MOSI
+#define MISO_PIN  19   // ESP32 pin GPIO19 for MISO
 
-// Access Point Settings
-const char* ap_ssid = "VotingMachine_AP";
-const char* ap_password = "votingmachine123";
-
-// RFID setup
+// Create MFRC522 instance
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-// Create webserver object
-WebServer server(80);
+// RFID card UID to check against (updated with the provided UID)
+byte authorizedUID[4] = {0x91, 0x6C, 0xDA, 0x0B};
 
-// Vote counters (initially zero)
-int count_party_1 = 0;
-int count_party_2 = 0;
-int count_party_3 = 0;
-int count_party_4 = 0;
+// RFID status
+bool rfidAuthorized = false;
+unsigned long lastRFIDCheck = 0;
+unsigned long lastDebugPrint = 0;
 
-// RFID UIDs (5 different cards) - stored as byte arrays
-byte RFID_CARD_UID[5][4] = {
-  {0x91, 0x6C, 0xDA, 0x0B},  // Card 1
-  {0xA2, 0x7D, 0xEB, 0x1C},  // Card 2
-  {0xB3, 0x8E, 0xFC, 0x2D},  // Card 3
-  {0xC4, 0x9F, 0x0D, 0x3E},  // Card 4
-  {0xD5, 0xA0, 0x1E, 0x4F}   // Card 5
-};
+// Variables to handle button debouncing
+unsigned long lastDebounceTime1 = 0;
+unsigned long lastDebounceTime2 = 0;
+unsigned long lastDebounceTime3 = 0;
+unsigned long lastDebounceTime4 = 0;
+unsigned long debounceDelay = 50;  // Debounce time in milliseconds
 
-// Authentication status (0 = false, 1 = true)
-int authentication_status = 0;
+// Button press counters - one for each button
+int button1Count = 0;
+int button2Count = 0;
+int button3Count = 0;
+int button4Count = 0;
+int lastActiveButton = 0;  // 0 = none, 1-4 = button number
 
-// RFID UID status (0 = not voted, 1 = voted)
-int RFID_UID_STATUS[5] = {0, 0, 0, 0, 0};
+// Variable to track which LED is currently active (0 = none, 1-4 = LED number)
+int activeLED = 0;
 
-// Current authenticated card index
-int current_card_index = -1;
+// Flag to track if we're in a counting session
+bool countingSession = false;
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);      // Initialize serial communication
   
-  // Initialize SPI and RFID
-  SPI.begin();
-  rfid.PCD_Init();
+  // Wait a bit for serial to be ready
+  delay(1000);
   
-  // Initialize pins
-  pinMode(AUTH_SUCCESS_LED, OUTPUT);
-  pinMode(AUTH_FAIL_LED, OUTPUT);
-  pinMode(PARTY1_LED, OUTPUT);
-  pinMode(PARTY2_LED, OUTPUT);
-  pinMode(PARTY3_LED, OUTPUT);
-  pinMode(PARTY4_LED, OUTPUT);
+  Serial.println("\n\n--- Starting ESP32 RFID Debugging ---");
   
-  pinMode(AUTH_BUZZER, OUTPUT);
-  pinMode(VOTE_BUZZER, OUTPUT);
+  // Set button pins as inputs with pull-up resistors
+  pinMode(button1Pin, INPUT_PULLUP);
+  pinMode(button2Pin, INPUT_PULLUP);
+  pinMode(button3Pin, INPUT_PULLUP);
+  pinMode(button4Pin, INPUT_PULLUP);
   
-  pinMode(PARTY1_BTN, INPUT_PULLUP);
-  pinMode(PARTY2_BTN, INPUT_PULLUP);
-  pinMode(PARTY3_BTN, INPUT_PULLUP);
-  pinMode(PARTY4_BTN, INPUT_PULLUP);
+  // Set LED pins as outputs
+  pinMode(led1Pin, OUTPUT);
+  pinMode(led2Pin, OUTPUT);
+  pinMode(led3Pin, OUTPUT);
+  pinMode(led4Pin, OUTPUT);
+  pinMode(led5Pin, OUTPUT);
   
-  // Set initial states
-  digitalWrite(AUTH_SUCCESS_LED, LOW);
-  digitalWrite(AUTH_FAIL_LED, LOW);
-  digitalWrite(PARTY1_LED, LOW);
-  digitalWrite(PARTY2_LED, LOW);
-  digitalWrite(PARTY3_LED, LOW);
-  digitalWrite(PARTY4_LED, LOW);
-  digitalWrite(AUTH_BUZZER, LOW);
-  digitalWrite(VOTE_BUZZER, LOW);
+  // Set buzzer pin as output
+  pinMode(buzzerPin, OUTPUT);
   
-  // Setup WiFi Access Point
-  Serial.println("Setting up Access Point...");
-  WiFi.softAP(ap_ssid, ap_password);
+  // Ensure all LEDs start off
+  turnOffAllLEDs();
   
-  Serial.println("Access Point Created");
-  Serial.print("SSID: ");
-  Serial.println(ap_ssid);
-  Serial.print("Password: ");
-  Serial.println(ap_password);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.softAPIP());
-  
-  // Setup web server routes
-  server.on("/", handleRoot);
-  server.begin();
-  Serial.println("HTTP server started");
-  
-  // Initial startup indication
+  // Blink LED 5 to indicate program start
   for (int i = 0; i < 3; i++) {
-    digitalWrite(AUTH_SUCCESS_LED, HIGH);
-    delay(200);
-    digitalWrite(AUTH_SUCCESS_LED, LOW);
-    delay(200);
+    digitalWrite(led5Pin, HIGH);
+    delay(100);
+    digitalWrite(led5Pin, LOW);
+    delay(100);
   }
   
-  Serial.println("Voting Machine Ready. Scan RFID card to begin.");
+  Serial.println("Initializing SPI bus for RFID...");
+  
+  // IMPORTANT: Set SS pin as OUTPUT before initializing SPI
+  pinMode(SS_PIN, OUTPUT);
+  digitalWrite(SS_PIN, HIGH);
+  
+  // Initialize custom SPI for RFID
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
+  delay(250); // Give SPI more time to initialize
+  
+  Serial.println("Initializing RFID reader...");
+  // Initialize RFID
+  rfid.PCD_Init();
+  delay(250);
+  
+  // Reset the RFID reader
+  rfid.PCD_Reset();
+  delay(250);
+  rfid.PCD_Init();
+  
+  // Print MFRC522 version and status to verify it's working
+  byte v = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+  Serial.print("MFRC522 Software Version: 0x");
+  Serial.print(v, HEX);
+  if (v == 0x91 || v == 0x92) {
+    Serial.println(" = v1.0 or v2.0");
+  } else if (v == 0x12) {
+    Serial.println(" = counterfeit chip");
+  } else {
+    Serial.println(" (unknown or not detected properly)");
+    Serial.println("WARNING: RFID reader may not be connected correctly!");
+  }
+  
+  // Check SPI communication with RFID reader
+  Serial.println("Testing RFID Reader Communication...");
+  
+  // Read other registers to verify communication
+  byte cmdReg = rfid.PCD_ReadRegister(MFRC522::CommandReg);
+  Serial.print("Command Register: 0x");
+  Serial.println(cmdReg, HEX);
+  
+  byte divReg = rfid.PCD_ReadRegister(MFRC522::DivIrqReg);
+  Serial.print("DivIrq Register: 0x");
+  Serial.println(divReg, HEX);
+  
+  // Show proper antenna gain (should be 0x40 = 32 dB)
+  byte gainReg = rfid.PCD_ReadRegister(MFRC522::RFCfgReg);
+  Serial.print("RFID Antenna Gain: 0x");
+  Serial.println(gainReg, HEX);
+  
+  // Set antenna gain to max and verify
+  Serial.println("Setting antenna gain to maximum...");
+  rfid.PCD_SetAntennaGain(MFRC522::RxGain_max);
+  gainReg = rfid.PCD_ReadRegister(MFRC522::RFCfgReg);
+  Serial.print("RFID Antenna Gain now: 0x");
+  Serial.println(gainReg, HEX);
+  
+  Serial.println("\nRFID Reader Initialization Complete");
+  Serial.println("Please scan your card - will continuously check for cards");
+  Serial.println("Authorized UID: 0x91 0x6C 0xDA 0x0B");
+  
+  displayAllCounts();
 }
 
 void loop() {
-  // Handle web server clients
-  server.handleClient();
+  // Check RFID more frequently to ensure we don't miss cards
+  if (millis() - lastRFIDCheck >= 50) {  // Check every 50ms
+    checkRFID();
+    lastRFIDCheck = millis();
+  }
   
-  // Check if there's a new card present
-  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
-    // Print card UID for debugging
-    Serial.print("Card detected: ");
-    printHex(rfid.uid.uidByte, rfid.uid.size);
-    
-    // Check if card is authorized
-    int cardIndex = checkCardAuthorization(rfid.uid.uidByte, rfid.uid.size);
-    
-    if (cardIndex != -1 && RFID_UID_STATUS[cardIndex] == 0) {
-      // Authentication successful
-      authentication_status = 1;
-      current_card_index = cardIndex;
-      Serial.println("Authentication successful. Please vote.");
-      
-      // Turn on success LED
-      digitalWrite(AUTH_SUCCESS_LED, HIGH);
-      
-      // Success beep - 1 second
-      digitalWrite(AUTH_BUZZER, HIGH);
-      delay(1000);
-      digitalWrite(AUTH_BUZZER, LOW);
-      digitalWrite(AUTH_SUCCESS_LED, LOW);
-      
+  // Print debug message every 3 seconds
+  if (millis() - lastDebugPrint >= 3000) {
+    Serial.println("Waiting for RFID card...");
+    lastDebugPrint = millis();
+  }
+  
+  // Blink LED5 to show system is running when not authorized
+  if (!rfidAuthorized) {
+    if ((millis() / 500) % 2 == 0) {
+      digitalWrite(led5Pin, HIGH);
     } else {
-      // Authentication failed or already voted
-      authentication_status = 0;
-      current_card_index = -1;
-      
-      if (cardIndex == -1) {
-        Serial.println("Authentication failed. Invalid card.");
-      } else {
-        Serial.println("Authentication failed. Card already used for voting.");
-      }
-      
-      // Turn on fail LED
-      digitalWrite(AUTH_FAIL_LED, HIGH);
-      
-      // Failure beep - 5 seconds
-      digitalWrite(AUTH_BUZZER, HIGH);
-      delay(5000);
-      digitalWrite(AUTH_BUZZER, LOW);
-      digitalWrite(AUTH_FAIL_LED, LOW);
-    }
-    
-    // Halt PICC
-    rfid.PICC_HaltA();
-    // Stop encryption on PCD
-    rfid.PCD_StopCrypto1();
-  }
-  
-  // Check for votes if authentication is successful
-  if (authentication_status == 1) {
-    // Check party buttons
-    if (digitalRead(PARTY1_BTN) == LOW) {
-      processVote(0, PARTY1_LED, &count_party_1);
-    }
-    else if (digitalRead(PARTY2_BTN) == LOW) {
-      processVote(1, PARTY2_LED, &count_party_2);
-    }
-    else if (digitalRead(PARTY3_BTN) == LOW) {
-      processVote(2, PARTY3_LED, &count_party_3);
-    }
-    else if (digitalRead(PARTY4_BTN) == LOW) {
-      processVote(3, PARTY4_LED, &count_party_4);
-    }
-  }
-}
-
-// Function to compare UID bytes and check authorization
-int checkCardAuthorization(byte* cardUID, byte uidSize) {
-  for (int i = 0; i < 5; i++) {
-    bool match = true;
-    
-    // Compare each byte of the UID
-    for (byte j = 0; j < 4; j++) {
-      if (j < uidSize && cardUID[j] != RFID_CARD_UID[i][j]) {
-        match = false;
-        break;
-      }
-    }
-    
-    if (match) {
-      return i; // Return the card index
+      digitalWrite(led5Pin, LOW);
     }
   }
   
-  return -1; // Not found
+  // Process button presses only if RFID is authorized
+  if (rfidAuthorized) {
+    // Keep LED5 solid on when authorized
+    digitalWrite(led5Pin, HIGH);
+    
+    // Read current state of all buttons
+    int reading1 = digitalRead(button1Pin);
+    int reading2 = digitalRead(button2Pin);
+    int reading3 = digitalRead(button3Pin);
+    int reading4 = digitalRead(button4Pin);
+    
+    // Check if any button is pressed to control buzzer
+    bool anyButtonPressed = false;
+    
+    // Handle Button 1
+    if (reading1 == LOW) {  // Button pressed (LOW because of pull-up resistor)
+      if ((millis() - lastDebounceTime1) > debounceDelay) {
+        // Button 1 is pressed and debounced
+        if (activeLED != 1) {  // Only update if this is a new press
+          activeLED = 1;
+          lastActiveButton = 1;
+          updateLEDs();
+          countingSession = true;  // Begin a counting session
+        }
+        anyButtonPressed = true;
+      }
+      lastDebounceTime1 = millis();
+    }
+    
+    // Handle Button 2
+    if (reading2 == LOW) {
+      if ((millis() - lastDebounceTime2) > debounceDelay) {
+        if (activeLED != 2) {
+          activeLED = 2;
+          lastActiveButton = 2;
+          updateLEDs();
+          countingSession = true;
+        }
+        anyButtonPressed = true;
+      }
+      lastDebounceTime2 = millis();
+    }
+    
+    // Handle Button 3
+    if (reading3 == LOW) {
+      if ((millis() - lastDebounceTime3) > debounceDelay) {
+        if (activeLED != 3) {
+          activeLED = 3;
+          lastActiveButton = 3;
+          updateLEDs();
+          countingSession = true;
+        }
+        anyButtonPressed = true;
+      }
+      lastDebounceTime3 = millis();
+    }
+    
+    // Handle Button 4
+    if (reading4 == LOW) {
+      if ((millis() - lastDebounceTime4) > debounceDelay) {
+        if (activeLED != 4) {
+          activeLED = 4;
+          lastActiveButton = 4;
+          updateLEDs();
+          countingSession = true;
+        }
+        anyButtonPressed = true;
+      }
+      lastDebounceTime4 = millis();
+    }
+    
+    // Check if all buttons are released
+    if (reading1 == HIGH && reading2 == HIGH && reading3 == HIGH && reading4 == HIGH) {
+      // All buttons released
+      if (activeLED != 0) {
+        // Only count if we were in a counting session
+        if (countingSession) {
+          // Increment the counter for the last active button
+          switch (lastActiveButton) {
+            case 1:
+              button1Count++;
+              break;
+            case 2:
+              button2Count++;
+              break;
+            case 3:
+              button3Count++;
+              break;
+            case 4:
+              button4Count++;
+              break;
+          }
+          
+          // Display all button counts
+          displayAllCounts();
+          countingSession = false;  // End counting session until a new button press
+        }
+        
+        // Turn off LED 1-4 only (keep LED 5 for RFID status)
+        activeLED = 0;
+        digitalWrite(led1Pin, LOW);
+        digitalWrite(led2Pin, LOW);
+        digitalWrite(led3Pin, LOW);
+        digitalWrite(led4Pin, LOW);
+      }
+    }
+    
+    // Control buzzer based on any button press
+    digitalWrite(buzzerPin, anyButtonPressed ? HIGH : LOW);
+  } else {
+    // RFID not authorized, keep all LEDs off except LED 5 which will blink
+    digitalWrite(led1Pin, LOW);
+    digitalWrite(led2Pin, LOW);
+    digitalWrite(led3Pin, LOW);
+    digitalWrite(led4Pin, LOW);
+    // LED5 controlled by the blinking code above
+  }
+  
+  delay(10);  // Small delay to stabilize readings
 }
 
-// Function to print UID in hex format
-void printHex(byte* buffer, byte bufferSize) {
-  for (byte i = 0; i < bufferSize; i++) {
-    Serial.print(buffer[i] < 0x10 ? "0" : "");
-    Serial.print(buffer[i], HEX);
+// Enhanced RFID checking function with more debugging
+void checkRFID() {
+  // Try to detect if card is present
+  if (!rfid.PICC_IsNewCardPresent()) {
+    // No card present, just return
+    return;
+  }
+  
+  // Card detected, output debug information
+  Serial.println("\n----- CARD DETECTED -----");
+  
+  // Try to read the card
+  if (!rfid.PICC_ReadCardSerial()) {
+    Serial.println("ERROR: Could detect card presence but failed to read card serial!");
+    return;
+  }
+  
+  // Card has been successfully read! Show all card details
+  Serial.println("SUCCESS: Card read successfully!");
+  
+  // Print UID in different formats for debugging
+  Serial.print("Card UID (HEX): ");
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    if (rfid.uid.uidByte[i] < 0x10) {
+      Serial.print("0");
+    }
+    Serial.print(rfid.uid.uidByte[i], HEX);
+    Serial.print(" ");
   }
   Serial.println();
+  
+  Serial.print("Card UID (DEC): ");
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    Serial.print(rfid.uid.uidByte[i], DEC);
+    Serial.print(" ");
+  }
+  Serial.println();
+  
+  Serial.print("Card UID Size: ");
+  Serial.print(rfid.uid.size);
+  Serial.println(" bytes");
+  
+  // Print card type
+  MFRC522::PICC_Type piccType = rfid.PICC_GetType(rfid.uid.sak);
+  Serial.print("Card type: ");
+  Serial.println(rfid.PICC_GetTypeName(piccType));
+  
+  // Compare UID with authorized UID
+  bool authorized = true;
+  for (byte i = 0; i < 4; i++) {  // Only check first 4 bytes
+    if (i < rfid.uid.size && rfid.uid.uidByte[i] != authorizedUID[i]) {
+      authorized = false;
+      break;
+    }
+  }
+  
+  Serial.print("Authorized: ");
+  Serial.println(authorized ? "YES" : "NO");
+  
+  if (authorized) {
+    Serial.println("*** ACCESS GRANTED! ***");
+    rfidAuthorized = true;
+    digitalWrite(led5Pin, HIGH);  // Turn on LED 5 to indicate authorized access
+    
+    // Short beep to indicate successful authorization
+    digitalWrite(buzzerPin, HIGH);
+    delay(100);
+    digitalWrite(buzzerPin, LOW);
+  } else {
+    Serial.println("*** ACCESS DENIED! ***");
+    rfidAuthorized = false;
+    digitalWrite(led5Pin, LOW);  // Turn off LED 5
+    soundBuzzer5Times();  // Sound buzzer 5 times for unauthorized access
+  }
+  
+  // Halt PICC and stop encryption
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
 }
 
-void processVote(int partyIndex, int ledPin, int* counterVar) {
-  if (current_card_index != -1 && authentication_status == 1) {
-    // Increment vote counter
-    (*counterVar)++;
-    
-    // Turn on party LED
-    digitalWrite(ledPin, HIGH);
-    
-    // Vote confirmation beep - 1 second
-    digitalWrite(VOTE_BUZZER, HIGH);
-    delay(1000);
-    digitalWrite(VOTE_BUZZER, LOW);
-    digitalWrite(ledPin, LOW);
-    
-    // Mark card as used
-    RFID_UID_STATUS[current_card_index] = 1;
-    
-    // Reset authentication status
-    authentication_status = 0;
-    current_card_index = -1;
-    
-    Serial.print("Vote recorded for Party ");
-    Serial.println(partyIndex + 1);
-    
-    // Print current vote count
-    printVoteCounts();
+// Function to sound buzzer 5 times
+void soundBuzzer5Times() {
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(buzzerPin, HIGH);
+    delay(200);
+    digitalWrite(buzzerPin, LOW);
+    delay(200);
   }
 }
 
-void printVoteCounts() {
-  Serial.println("Current Vote Count:");
-  Serial.print("Party 1: ");
-  Serial.println(count_party_1);
-  Serial.print("Party 2: ");
-  Serial.println(count_party_2);
-  Serial.print("Party 3: ");
-  Serial.println(count_party_3);
-  Serial.print("Party 4: ");
-  Serial.println(count_party_4);
+// Function to display all button counts
+void displayAllCounts() {
+  Serial.println("-------------------");
+  Serial.println("Button Press Counts:");
+  Serial.print("Button 1: ");
+  Serial.println(button1Count);
+  Serial.print("Button 2: ");
+  Serial.println(button2Count);
+  Serial.print("Button 3: ");
+  Serial.println(button3Count);
+  Serial.print("Button 4: ");
+  Serial.println(button4Count);
+  Serial.println("-------------------");
 }
 
-void handleRoot() {
-  String html = "<!DOCTYPE html>\n";
-  html += "<html>\n";
-  html += "<head>\n";
-  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
-  html += "<title>Voting Machine Results</title>\n";
-  html += "<style>\n";
-  html += "body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }\n";
-  html += ".party-box { border: 1px solid #ddd; margin: 10px; padding: 15px; border-radius: 5px; }\n";
-  html += ".party1 { background-color: #c8e6c9; }\n";
-  html += ".party2 { background-color: #bbdefb; }\n";
-  html += ".party3 { background-color: #ffecb3; }\n";
-  html += ".party4 { background-color: #f8bbd0; }\n";
-  html += ".votes { font-size: 24px; font-weight: bold; }\n";
-  html += "h1 { color: #333; }\n";
-  html += ".refresh-btn { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; margin-top: 20px; }\n";
-  html += "</style>\n";
-  html += "</head>\n";
-  html += "<body>\n";
-  html += "<h1>Electronic Voting Machine Results</h1>\n";
+// Function to update LEDs based on active LED (preserving LED 5 status)
+void updateLEDs() {
+  // Turn off LEDs 1-4 only
+  digitalWrite(led1Pin, LOW);
+  digitalWrite(led2Pin, LOW);
+  digitalWrite(led3Pin, LOW);
+  digitalWrite(led4Pin, LOW);
   
-  html += "<div class=\"party-box party1\">\n";
-  html += "<h2>Party 1</h2>\n";
-  html += "<div class=\"votes\">" + String(count_party_1) + "</div>\n";
-  html += "</div>\n";
-  
-  html += "<div class=\"party-box party2\">\n";
-  html += "<h2>Party 2</h2>\n";
-  html += "<div class=\"votes\">" + String(count_party_2) + "</div>\n";
-  html += "</div>\n";
-  
-  html += "<div class=\"party-box party3\">\n";
-  html += "<h2>Party 3</h2>\n";
-  html += "<div class=\"votes\">" + String(count_party_3) + "</div>\n";
-  html += "</div>\n";
-  
-  html += "<div class=\"party-box party4\">\n";
-  html += "<h2>Party 4</h2>\n";
-  html += "<div class=\"votes\">" + String(count_party_4) + "</div>\n";
-  html += "</div>\n";
-  
-  html += "<p>Total Votes: " + String(count_party_1 + count_party_2 + count_party_3 + count_party_4) + "</p>\n";
-  html += "<button class=\"refresh-btn\" onclick=\"location.reload()\">Refresh Results</button>\n";
-  html += "<script>\n";
-  html += "setTimeout(function(){ location.reload(); }, 5000);\n";
-  html += "</script>\n";
-  html += "</body>\n";
-  html += "</html>\n";
-  
-  server.send(200, "text/html", html);
+  // Turn on only the active LED
+  switch (activeLED) {
+    case 1:
+      digitalWrite(led1Pin, HIGH);
+      break;
+    case 2:
+      digitalWrite(led2Pin, HIGH);
+      break;
+    case 3:
+      digitalWrite(led3Pin, HIGH);
+      break;
+    case 4:
+      digitalWrite(led4Pin, HIGH);
+      break;
+    default:
+      // No LED active
+      break;
+  }
+}
+
+// Function to turn off all LEDs including LED 5
+void turnOffAllLEDs() {
+  digitalWrite(led1Pin, LOW);
+  digitalWrite(led2Pin, LOW);
+  digitalWrite(led3Pin, LOW);
+  digitalWrite(led4Pin, LOW);
+  digitalWrite(led5Pin, LOW);
 }
