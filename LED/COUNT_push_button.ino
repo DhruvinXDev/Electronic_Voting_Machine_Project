@@ -1,5 +1,6 @@
 // ESP32 Four Push Button Example with Buzzer
-// Button presses are only counted if the last active LED was from that button
+// Each button controls its LED, but only one LED can be on at a time
+// Counts presses for all buttons
 
 // Define the GPIO pins for buttons, LEDs and buzzer
 const int button1Pin = 4;    // GPIO pin for first button
@@ -21,20 +22,18 @@ unsigned long lastDebounceTime3 = 0;
 unsigned long lastDebounceTime4 = 0;
 unsigned long debounceDelay = 50;  // Debounce time in milliseconds
 
-// Button press counters
+// Button press counters - one for each button
 int button1Count = 0;
 int button2Count = 0;
 int button3Count = 0;
 int button4Count = 0;
+int lastActiveButton = 0;  // 0 = none, 1-4 = button number
 
 // Variable to track which LED is currently active (0 = none, 1-4 = LED number)
 int activeLED = 0;
 
-// Variable to keep track of the last active LED
-int lastActiveLED = 0;
-
-// Flag to track if a button was just pressed
-bool buttonJustPressed = false;
+// Flag to track if we're in a counting session
+bool countingSession = false;
 
 void setup() {
   Serial.begin(115200);      // Initialize serial communication
@@ -57,7 +56,8 @@ void setup() {
   // Ensure all LEDs start off
   turnOffAllLEDs();
   
-  Serial.println("ESP32 Four Button Example with Last LED Button Count Feature");
+  Serial.println("ESP32 Four Button Example - Tracking All Button Counts");
+  displayAllCounts();
 }
 
 void loop() {
@@ -69,23 +69,17 @@ void loop() {
   
   // Check if any button is pressed to control buzzer
   bool anyButtonPressed = false;
-  buttonJustPressed = false;
   
   // Handle Button 1
   if (reading1 == LOW) {  // Button pressed (LOW because of pull-up resistor)
     if ((millis() - lastDebounceTime1) > debounceDelay) {
       // Button 1 is pressed and debounced
-      if (activeLED != 1) {  // Only if this is a new press
-        // Only increment counter if the last active LED was LED 1
-        if (lastActiveLED == 1) {
-          button1Count++;
-          Serial.println("Button 1 counted! Count: " + String(button1Count));
-        }
-        buttonJustPressed = true;
-        Serial.println("Button 1 pressed!");
+      if (activeLED != 1) {  // Only update if this is a new press
+        activeLED = 1;
+        lastActiveButton = 1;
+        updateLEDs();
+        countingSession = true;  // Begin a counting session
       }
-      activeLED = 1;
-      updateLEDs();
       anyButtonPressed = true;
     }
     lastDebounceTime1 = millis();
@@ -94,17 +88,12 @@ void loop() {
   // Handle Button 2
   if (reading2 == LOW) {
     if ((millis() - lastDebounceTime2) > debounceDelay) {
-      if (activeLED != 2) {  // Only if this is a new press
-        // Only increment counter if the last active LED was LED 2
-        if (lastActiveLED == 2) {
-          button2Count++;
-          Serial.println("Button 2 counted! Count: " + String(button2Count));
-        }
-        buttonJustPressed = true;
-        Serial.println("Button 2 pressed!");
+      if (activeLED != 2) {
+        activeLED = 2;
+        lastActiveButton = 2;
+        updateLEDs();
+        countingSession = true;
       }
-      activeLED = 2;
-      updateLEDs();
       anyButtonPressed = true;
     }
     lastDebounceTime2 = millis();
@@ -113,17 +102,12 @@ void loop() {
   // Handle Button 3
   if (reading3 == LOW) {
     if ((millis() - lastDebounceTime3) > debounceDelay) {
-      if (activeLED != 3) {  // Only if this is a new press
-        // Only increment counter if the last active LED was LED 3
-        if (lastActiveLED == 3) {
-          button3Count++;
-          Serial.println("Button 3 counted! Count: " + String(button3Count));
-        }
-        buttonJustPressed = true;
-        Serial.println("Button 3 pressed!");
+      if (activeLED != 3) {
+        activeLED = 3;
+        lastActiveButton = 3;
+        updateLEDs();
+        countingSession = true;
       }
-      activeLED = 3;
-      updateLEDs();
       anyButtonPressed = true;
     }
     lastDebounceTime3 = millis();
@@ -132,17 +116,12 @@ void loop() {
   // Handle Button 4
   if (reading4 == LOW) {
     if ((millis() - lastDebounceTime4) > debounceDelay) {
-      if (activeLED != 4) {  // Only if this is a new press
-        // Only increment counter if the last active LED was LED 4
-        if (lastActiveLED == 4) {
-          button4Count++;
-          Serial.println("Button 4 counted! Count: " + String(button4Count));
-        }
-        buttonJustPressed = true;
-        Serial.println("Button 4 pressed!");
+      if (activeLED != 4) {
+        activeLED = 4;
+        lastActiveButton = 4;
+        updateLEDs();
+        countingSession = true;
       }
-      activeLED = 4;
-      updateLEDs();
       anyButtonPressed = true;
     }
     lastDebounceTime4 = millis();
@@ -150,23 +129,30 @@ void loop() {
   
   // Check if all buttons are released
   if (reading1 == HIGH && reading2 == HIGH && reading3 == HIGH && reading4 == HIGH) {
-    // All buttons released, record the last active LED before turning off
+    // All buttons released
     if (activeLED != 0) {
-      lastActiveLED = activeLED;
-      
-      // Print the last active LED and button press counts
-      Serial.print("Last active LED was: ");
-      Serial.println(lastActiveLED);
-      Serial.println("Button press counts:");
-      Serial.print("Button 1: ");
-      Serial.println(button1Count);
-      Serial.print("Button 2: ");
-      Serial.println(button2Count);
-      Serial.print("Button 3: ");
-      Serial.println(button3Count);
-      Serial.print("Button 4: ");
-      Serial.println(button4Count);
-      Serial.println("-------------------");
+      // Only count if we were in a counting session
+      if (countingSession) {
+        // Increment the counter for the last active button
+        switch (lastActiveButton) {
+          case 1:
+            button1Count++;
+            break;
+          case 2:
+            button2Count++;
+            break;
+          case 3:
+            button3Count++;
+            break;
+          case 4:
+            button4Count++;
+            break;
+        }
+        
+        // Display all button counts
+        displayAllCounts();
+        countingSession = false;  // End counting session until a new button press
+      }
       
       // Turn off all LEDs
       activeLED = 0;
@@ -178,6 +164,21 @@ void loop() {
   digitalWrite(buzzerPin, anyButtonPressed ? HIGH : LOW);
   
   delay(10);  // Small delay to stabilize readings
+}
+
+// Function to display all button counts
+void displayAllCounts() {
+  Serial.println("-------------------");
+  Serial.println("Button Press Counts:");
+  Serial.print("Button 1: ");
+  Serial.println(button1Count);
+  Serial.print("Button 2: ");
+  Serial.println(button2Count);
+  Serial.print("Button 3: ");
+  Serial.println(button3Count);
+  Serial.print("Button 4: ");
+  Serial.println(button4Count);
+  Serial.println("-------------------");
 }
 
 // Function to update LEDs based on active LED
