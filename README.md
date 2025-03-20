@@ -1,5 +1,4 @@
-# ESP32 Connection Diagram for RFID Button System
-
+# ESP32 Connection Diagram for Electronic Voting Machine Project
 ## Component Overview
 This connection diagram outlines how to wire the ESP32 with:
 - MFRC522 RFID Reader
