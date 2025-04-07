@@ -38,8 +38,14 @@ const int buzzerPin = 25;    // Changed from 16 to 25 (to avoid conflict with le
 // Create MFRC522 instance
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-// RFID card UID to check against (updated with the provided UID)
-byte authorizedUID[4] = {0x91, 0x6C, 0xDA, 0x0B};
+// RFID card UIDs to check against (including the original one plus two new ones)
+// Original authorized UID
+const int NUM_AUTHORIZED_UIDS = 3; // Three authorized UIDs
+byte authorizedUIDs[NUM_AUTHORIZED_UIDS][4] = {
+  {0x91, 0x6C, 0xDA, 0x0B}, // Original UID
+  {0x00, 0x00, 0x00, 0x00}, // New UID 1 - You'll need to replace with actual UIDs
+  {0x00, 0x00, 0x00, 0x00}  // New UID 2 - You'll need to replace with actual UIDs
+};
 
 // RFID status
 bool rfidAuthorized = false;
@@ -69,10 +75,10 @@ bool countingSession = false;
 
 // Names for the voting options
 String optionNames[4] = {
-  "Option 1",
-  "Option 2",
-  "Option 3",
-  "Option 4"
+  "Shreeja",
+  "Dhruvin",
+  "Darshan",
+  "NOTA"
 };
 
 void setup() {
@@ -169,7 +175,21 @@ void setup() {
   
   Serial.println("\nRFID Reader Initialization Complete");
   Serial.println("Please scan your card to vote");
-  Serial.println("Authorized UID: 0x91 0x6C 0xDA 0x0B");
+  
+  // Print all authorized UIDs
+  Serial.println("Authorized UIDs:");
+  for (int i = 0; i < NUM_AUTHORIZED_UIDS; i++) {
+    Serial.print("UID ");
+    Serial.print(i + 1);
+    Serial.print(": 0x");
+    for (int j = 0; j < 4; j++) {
+      if (authorizedUIDs[i][j] < 0x10) Serial.print("0");
+      Serial.print(authorizedUIDs[i][j], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+  }
+  
   Serial.println("Connect to WiFi SSID: " + String(ssid) + " with password: " + String(password));
   Serial.println("Then open a web browser and navigate to http://" + WiFi.softAPIP().toString());
   
@@ -501,17 +521,32 @@ void checkRFID() {
   Serial.print("Card type: ");
   Serial.println(rfid.PICC_GetTypeName(piccType));
   
-  // Compare UID with authorized UID
-  bool authorized = true;
-  for (byte i = 0; i < 4; i++) {  // Only check first 4 bytes
-    if (i < rfid.uid.size && rfid.uid.uidByte[i] != authorizedUID[i]) {
-      authorized = false;
+  // Compare UID with all authorized UIDs
+  bool authorized = false;
+  int matchedUidIndex = -1;
+  
+  for (int i = 0; i < NUM_AUTHORIZED_UIDS; i++) {
+    bool match = true;
+    for (byte j = 0; j < 4; j++) {  // Check first 4 bytes of UID
+      if (j < rfid.uid.size && rfid.uid.uidByte[j] != authorizedUIDs[i][j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      authorized = true;
+      matchedUidIndex = i;
       break;
     }
   }
   
   Serial.print("Authorized: ");
   Serial.println(authorized ? "YES" : "NO");
+  
+  if (authorized) {
+    Serial.print("Matched UID index: ");
+    Serial.println(matchedUidIndex + 1);
+  }
   
   // If already authorized and vote registered, this is a new scan,
   // so we need to reset the vote registered flag
