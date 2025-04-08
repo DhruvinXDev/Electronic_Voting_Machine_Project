@@ -43,8 +43,8 @@ MFRC522 rfid(SS_PIN, RST_PIN);
 const int NUM_AUTHORIZED_UIDS = 3; // Three authorized UIDs
 byte authorizedUIDs[NUM_AUTHORIZED_UIDS][4] = {
   {0x91, 0x6C, 0xDA, 0x0B}, // Original UID
-  {0x00, 0x00, 0x00, 0x00}, // New UID 1 - You'll need to replace with actual UIDs
-  {0x00, 0x00, 0x00, 0x00}  // New UID 2 - You'll need to replace with actual UIDs
+  {0xF3, 0x5F, 0xC3, 0x2C}, // New UID 1 - You'll need to replace with actual UIDs
+  {0xD3, 0x97, 0xB1, 0xB}  // New UID 2 - You'll need to replace with actual UIDs
 };
 
 // RFID status
